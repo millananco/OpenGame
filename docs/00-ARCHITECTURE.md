@@ -4,459 +4,489 @@
 
 OpenGame is a reusable framework for building Roblox games with a modular, maintainable, and scalable architecture.
 
-Its main objective is to separate:
+The framework must remain independent from the rules of any specific game. Game-specific behavior lives outside OpenGame and is loaded through the framework's public API.
 
-- reusable framework infrastructure;
-- game-specific features;
-- Roblox engine objects and assets;
-- server and client responsibilities.
-
-OpenGame must not contain logic tied to a single game. A treadmill, a gym, a race, or a training system belongs to the game that uses the framework, not to the framework itself.
+The first integration used to validate this architecture is `TreadmillGame`.
 
 ---
 
-## 2. Core Principle
+## 2. Architectural Principle
 
-The architecture is divided into two main layers:
+The dependency direction is:
 
 ```text
+Roblox Engine
+     ↑
 OpenGame Framework
-        ↓
+     ↑
 Game Implementation
 ```
 
-### OpenGame Framework
+A game may depend on OpenGame. OpenGame must never depend on a specific game.
 
-Contains reusable technical capabilities that can be used by any Roblox project.
-
-Examples:
-
-- service lifecycle;
-- dependency registration;
-- event system;
-- logging;
-- configuration;
-- persistence abstractions;
-- networking abstractions;
-- shared utilities.
-
-### Game Implementation
-
-Contains the rules, systems, entities, configuration, and assets that belong to a specific game.
-
-Examples for a treadmill game:
-
-- training;
-- treadmills;
-- gyms;
-- races;
-- shops;
-- player progression;
-- game-specific statistics.
+This allows the same framework to support future projects such as racing, combat, tycoon, survival, or simulation games without changing the framework for each project.
 
 ---
 
-## 3. Proposed Roblox Structure
+## 3. OpenGame 0.1.0 Baseline
+
+The current validated baseline introduces a public engine object with the following responsibilities:
+
+```lua
+OpenGame.new()
+OpenGame:RegisterService(name, service)
+OpenGame:GetService(name)
+OpenGame:RegisterModule(module)
+OpenGame:GetModule(name)
+OpenGame:LoadGame(gameModule)
+OpenGame:Initialize()
+OpenGame:Start()
+OpenGame:Shutdown()
+```
+
+The engine keeps deterministic registration order for services and modules.
+
+The lifecycle is:
+
+```text
+Register
+   ↓
+Initialize
+   ↓
+Start
+   ↓
+Shutdown
+```
+
+Shutdown occurs in reverse order so dependent systems can release resources before the systems they depend on are closed.
+
+---
+
+## 4. Current Roblox Structure
 
 ```text
 ReplicatedStorage
 ├── OpenGame
 │   ├── Core
-│   │   ├── ServiceManager
-│   │   ├── EventBus
-│   │   ├── Logger
-│   │   └── Configuration
-│   │
-│   ├── Services
-│   │   ├── PlayerLifecycleService
-│   │   ├── DataService
-│   │   └── NetworkService
-│   │
-│   ├── Shared
-│   │   ├── Types
-│   │   ├── Constants
-│   │   └── Utils
-│   │
-│   └── Remotes
+│   │   └── OpenGame
+│   └── Services
+│       └── PlayerService
 │
 └── TreadmillGame
-    ├── Modules
-    │   ├── Player
-    │   │   ├── Services
-    │   │   ├── Config
-    │   │   └── Shared
-    │   │
-    │   ├── Training
-    │   │   ├── Services
-    │   │   ├── GameObjects
-    │   │   ├── Config
-    │   │   └── Events
-    │   │
-    │   ├── Shop
-    │   │   ├── Services
-    │   │   ├── Config
-    │   │   └── Events
-    │   │
-    │   └── Racing
-    │       ├── Services
-    │       ├── GameObjects
-    │       ├── Config
-    │       └── Events
-    │
-    ├── Shared
-    └── Remotes
+    ├── Game
+    ├── Config
+    │   └── Player
+    └── Modules
+        └── Training
+            ├── Module
+            ├── Services
+            │   ├── TrainingService
+            │   └── TreadmillService
+            ├── GameObjects
+            │   └── Treadmill
+            └── Config
+                └── Treadmills
 
 ServerScriptService
 └── Server
-    ├── Bootstrap
-    └── ServerConfig
-
-StarterPlayer
-└── StarterPlayerScripts
-    └── ClientBootstrap
+    └── Bootstrap
 
 Workspace
 └── Map
-    ├── Treadmills
-    ├── Gyms
-    ├── RaceTracks
-    └── SpawnLocations
+    └── Treadmill
+        ├── Belt
+        ├── TreadmillBase
+        ├── Handle
+        ├── SupportLeft
+        └── SupportRight
 ```
+
+The physical treadmill stays in `Workspace` because it is an active world object.
+
+The `Treadmill` ModuleScript in `GameObjects` contains reusable behavior for one treadmill instance.
 
 ---
 
-## 4. Framework Responsibilities
+## 5. Bootstrap Responsibilities
 
-OpenGame should provide infrastructure, not game rules.
+`Bootstrap` must remain small.
 
-### Core
+Its current responsibilities are:
 
-The `Core` layer contains the fundamental building blocks of the framework.
+1. load the OpenGame engine class;
+2. create the engine instance;
+3. register framework-level services;
+4. load the selected game;
+5. start the engine;
+6. forward Roblox server shutdown to `engine:Shutdown()`.
 
-#### ServiceManager
-
-Responsible for:
-
-- registering services;
-- resolving services;
-- controlling initialization order;
-- starting and stopping services;
-- preventing duplicate registrations;
-- reporting startup errors.
-
-A service lifecycle may evolve toward:
+Conceptually:
 
 ```lua
-service:Init(context)
-service:Start()
-service:Stop()
+local engine = OpenGame.new()
+
+engine:RegisterService("PlayerService", PlayerService)
+engine:LoadGame(TreadmillGame)
+engine:Start()
 ```
 
-#### EventBus
+Bootstrap does not register `TrainingService` or `TreadmillService` directly.
 
-Provides decoupled communication between systems.
-
-Example:
-
-```lua
-EventBus:Publish("PlayerTrainingStarted", player, treadmillId)
-```
-
-Consumers subscribe without direct dependency on the publisher.
-
-#### Logger
-
-Provides consistent logging levels:
-
-- Debug;
-- Info;
-- Warning;
-- Error;
-- Critical.
-
-#### Configuration
-
-Provides centralized framework configuration and validation.
+That responsibility belongs to `TreadmillGame` and its modules.
 
 ---
 
-## 5. Game Module Responsibilities
+## 6. Game Entry Point
 
-Each game-specific feature should be organized as a functional module.
+Every game integrated with OpenGame should expose one entry ModuleScript.
+
+For the first game:
+
+```text
+TreadmillGame
+└── Game
+```
+
+The game entry point declares metadata such as:
+
+```lua
+Game.Name = "TreadmillGame"
+Game.Version = "0.1.0"
+```
+
+It also owns registration of the game's modules.
+
+Example responsibility:
+
+```text
+TreadmillGame.Game
+        ↓
+Training Module
+        ↓
+TrainingService
+TreadmillService
+```
+
+OpenGame therefore knows that a game has been loaded, but it does not need to know the internal feature list of that game.
+
+---
+
+## 7. Functional Modules
+
+Game-specific systems are grouped by business capability rather than by global technical type.
 
 Example:
 
 ```text
 Training
+├── Module
 ├── Services
 │   ├── TrainingService
 │   └── TreadmillService
 ├── GameObjects
 │   └── Treadmill
-├── Config
-│   └── Treadmills
-├── Events
-│   └── TrainingEvents
-└── Shared
-    └── TrainingTypes
+└── Config
+    └── Treadmills
 ```
 
-A module owns everything related to its business capability.
+The module entry point is responsible for registering its own services with the engine.
 
-This prevents a global `Services` folder from becoming overcrowded and makes each feature easier to understand, move, test, and maintain.
+This prevents a global `Services` directory from growing indefinitely as the game gains more features.
+
+Future modules may include:
+
+```text
+Shop
+Racing
+Gym
+Pets
+Quests
+```
+
+Each module should own its services, configuration, GameObjects, events, and other feature-specific resources.
 
 ---
 
-## 6. Services and GameObjects
+## 8. Services
 
-### Services
+Services coordinate systems and shared gameplay state.
 
-Services coordinate systems and manage shared state.
+### Framework services
 
-Examples:
+Framework services must be generic.
 
-- `TrainingService` calculates rewards;
-- `TreadmillService` discovers and manages treadmill instances;
-- `ShopService` handles purchases;
-- `RaceService` coordinates races.
+The current example is `PlayerService`.
 
-A service should not directly contain every detail of every physical object.
+`PlayerService` is responsible for generic player initialization but does not define treadmill-specific statistics.
 
-### GameObjects
+### Game services
 
-GameObjects wrap Roblox models and give them behavior.
+Game-specific services belong to their functional module.
 
-Example:
+Current examples:
 
-```lua
-local treadmill = Treadmill.new(model, config)
-treadmill:Start()
-```
+- `TrainingService` applies training rewards;
+- `TreadmillService` discovers and manages treadmill instances.
 
-A `Treadmill` GameObject may be responsible for:
-
-- validating the model structure;
-- locating the belt;
-- controlling belt movement;
-- detecting players;
-- exposing treadmill state;
-- cleaning up connections.
-
-The corresponding service manages multiple treadmill objects.
+Services should coordinate behavior rather than contain all implementation details of every world object.
 
 ---
 
-## 7. Configuration-Driven Design
+## 9. Generic Player Configuration
 
-Game behavior should be configured rather than duplicated in scripts.
+Player statistics are defined by the game, not by OpenGame.
 
-Example:
+OpenGame's `PlayerService` accepts a configuration supplied by the loaded game.
+
+Current `TreadmillGame` configuration defines:
+
+```text
+Coins
+Strength
+Level
+```
+
+Conceptually:
 
 ```lua
-return {
-    Basic = {
-        DisplayName = "Basic",
-        CoinsPerSecond = 1,
-        StrengthPerSecond = 2,
-        Speed = 8,
-        RequiredLevel = 1,
-        Price = 0,
-    },
-
-    Professional = {
-        DisplayName = "Professional",
-        CoinsPerSecond = 5,
-        StrengthPerSecond = 8,
-        Speed = 15,
-        RequiredLevel = 10,
-        Price = 500,
+PlayerConfig.Stats = {
+    {
+        Name = "Coins",
+        Type = "IntValue",
+        Default = 0,
+        Leaderstat = true,
     },
 }
 ```
 
-A treadmill model only needs an attribute such as:
+This means another game can define completely different statistics without modifying `PlayerService`.
+
+For example:
+
+```text
+RacingGame
+├── Money
+├── Wins
+├── Cars
+└── Reputation
+```
+
+This is an important boundary of the framework.
+
+---
+
+## 10. GameObjects
+
+A GameObject represents behavior for one concrete world instance.
+
+The current implemented example is:
+
+```text
+Training/GameObjects/Treadmill
+```
+
+A treadmill object receives:
+
+- the Roblox model;
+- treadmill configuration;
+- the required training service.
+
+It is responsible for behavior associated with that single treadmill instance, including:
+
+- locating the belt;
+- detecting players;
+- moving the belt;
+- applying configured training behavior through `TrainingService`;
+- cleaning up event connections.
+
+`TreadmillService` manages the collection of treadmill GameObjects.
+
+The distinction is:
+
+```text
+TreadmillService
+= manages many treadmill instances
+
+Treadmill GameObject
+= controls one treadmill instance
+```
+
+---
+
+## 11. Configuration-Driven Game Objects
+
+Treadmill behavior is driven by game configuration instead of duplicated scripts.
+
+A physical treadmill model can expose an attribute such as:
 
 ```text
 Type = Basic
 ```
 
-The code reads the matching configuration automatically.
-
----
-
-## 8. Server and Client Separation
-
-### Server
-
-The server is authoritative for:
-
-- player data;
-- rewards;
-- purchases;
-- progression;
-- game rules;
-- anti-cheat validation;
-- persistence.
-
-### Client
-
-The client is responsible for:
-
-- user interface;
-- local visual effects;
-- local sounds;
-- input handling;
-- camera behavior;
-- presentation of server state.
-
-The client must never be trusted to directly grant currency, strength, experience, items, or purchases.
-
----
-
-## 9. Dependency Direction
-
-The dependency direction must remain clear:
+The game then resolves the matching configuration from:
 
 ```text
-Game Modules
-     ↓
-OpenGame Framework
-     ↓
-Roblox Services
+Training/Config/Treadmills
 ```
 
-OpenGame must never depend on `TreadmillGame`.
-
-A game may depend on OpenGame, but the framework must remain unaware of game-specific modules.
-
-This rule is essential for reusability.
-
----
-
-## 10. Bootstrap Process
-
-The server bootstrap should initialize the framework first and the game second.
-
-Example sequence:
+Example categories may define values such as:
 
 ```text
-1. Load OpenGame Core
-2. Register framework services
-3. Register game services
-4. Initialize services
-5. Start services
-6. Mark server as ready
+Speed
+Coins
+Strength
 ```
 
-Conceptual example:
-
-```lua
-ServiceManager:Register("PlayerLifecycleService", PlayerLifecycleService)
-ServiceManager:Register("TrainingService", TrainingService)
-ServiceManager:Register("TreadmillService", TreadmillService)
-
-ServiceManager:Init()
-ServiceManager:Start()
-```
-
-The bootstrap should remain small and should not contain game logic.
+This allows multiple treadmill variants to reuse the same behavior implementation.
 
 ---
 
-## 11. Initial Module Classification
+## 12. Workspace vs ReplicatedStorage
 
-### Belongs to OpenGame
+The project follows a strict distinction between code and active world instances.
 
-- `ServiceManager`;
-- `EventBus`;
-- `Logger`;
-- generic configuration utilities;
-- generic player lifecycle handling;
-- generic persistence abstractions;
-- generic networking abstractions;
-- shared validation and utility functions.
+### Workspace
 
-### Belongs to TreadmillGame
+Contains active Roblox objects that exist in the running world.
 
+Example:
+
+```text
+Workspace/Map/Treadmill
+```
+
+### ReplicatedStorage
+
+Contains reusable code, configuration, module definitions, and shared resources.
+
+Example:
+
+```text
+ReplicatedStorage/TreadmillGame/Modules/Training/GameObjects/Treadmill
+```
+
+The same name may therefore appear in both places, but the responsibilities are different:
+
+```text
+Workspace/Map/Treadmill
+= physical model
+
+GameObjects/Treadmill
+= reusable ModuleScript behavior
+```
+
+---
+
+## 13. Lifecycle Ordering
+
+OpenGame preserves service registration order.
+
+The current validated service order is:
+
+```text
+1. PlayerService
+2. TrainingService
+3. TreadmillService
+```
+
+This ensures framework-level player infrastructure starts before game systems that may depend on player state.
+
+The engine uses explicit ordered arrays in addition to lookup tables so startup order does not depend on Lua table iteration order.
+
+---
+
+## 14. Current Startup Flow
+
+The validated startup path is:
+
+```text
+Roblox Server
+    ↓
+Bootstrap
+    ↓
+OpenGame.new()
+    ↓
+Register PlayerService
+    ↓
+Load TreadmillGame
+    ↓
+TreadmillGame registers Training module
+    ↓
+Training registers TrainingService
+    ↓
+Training registers TreadmillService
+    ↓
+OpenGame.Initialize()
+    ↓
+OpenGame.Start()
+    ↓
+TreadmillService discovers Workspace treadmill
+    ↓
+Treadmill GameObject starts
+```
+
+This flow has been exercised successfully in Roblox Studio with the treadmill active and player statistics created from game configuration.
+
+---
+
+## 15. Design Rules
+
+1. OpenGame contains only reusable framework behavior.
+2. OpenGame must never depend on a specific game implementation.
+3. A game exposes one entry module that OpenGame can load.
+4. The game entry module owns registration of game modules.
+5. Functional modules own their own services, GameObjects, configuration, and events.
+6. Framework services must not hard-code game-specific rules or statistics.
+7. Services coordinate systems; GameObjects control individual instances.
+8. Active physical objects live in `Workspace`.
+9. Reusable behavior and configuration live outside `Workspace`.
+10. Startup and shutdown order must be deterministic.
+11. Bootstrap remains minimal and contains no gameplay rules.
+12. New framework features should be extracted from real reusable needs rather than designed speculatively.
+
+---
+
+## 16. Status of OpenGame 0.1.0
+
+The following foundation is currently implemented and validated:
+
+- public `OpenGame` engine object;
+- service registration and lookup;
+- module registration and lookup;
+- game loading through `LoadGame`;
+- deterministic service startup order;
+- initialize/start/shutdown lifecycle;
+- generic `PlayerService` configuration;
+- `TreadmillGame` game entry point;
+- `Training` functional module;
 - `TrainingService`;
 - `TreadmillService`;
 - `Treadmill` GameObject;
-- treadmill configuration;
-- Coins, Strength, Level, and game progression rules;
-- gyms;
-- races;
-- treadmill shops;
-- treadmill-specific UI.
+- configuration-driven treadmill types;
+- separation between framework and game-specific player statistics.
+
+Components discussed but not yet considered part of the 0.1.0 implementation include systems such as EventBus, Logger, persistence, networking abstractions, generic zones, AI, UI infrastructure, and other future engine capabilities.
 
 ---
 
-## 12. Design Rules
+## 17. Next Direction
 
-1. OpenGame contains only reusable functionality.
-2. Game rules remain outside the framework.
-3. Functional modules own their services, configuration, events, and GameObjects.
-4. Server code is authoritative for gameplay state.
-5. Configuration replaces repeated hard-coded values.
-6. Services coordinate; GameObjects represent and control instances.
-7. Modules communicate through explicit APIs or events.
-8. Bootstrap remains minimal.
-9. Dependencies point from the game toward the framework, never the opposite.
-10. Each component must have one clear responsibility.
+The next development should validate the current abstractions with real gameplay requirements instead of expanding the framework prematurely.
 
----
-
-## 13. Initial Development Roadmap
-
-### Phase 1 — Framework foundation
-
-- create repository structure;
-- implement `ServiceManager`;
-- define service lifecycle;
-- implement basic logging;
-- create server bootstrap.
-
-### Phase 2 — First game integration
-
-- create `TreadmillGame` structure;
-- move `TrainingService` into the game module;
-- move `TreadmillService` into the game module;
-- create `Treadmill` GameObject;
-- validate configuration-driven treadmill creation.
-
-### Phase 3 — Player progression
-
-- define game statistics;
-- add experience and level progression;
-- add treadmill unlock requirements;
-- add purchase validation.
-
-### Phase 4 — Persistence and networking
-
-- add `DataService` abstraction;
-- save player progression;
-- define RemoteEvents and RemoteFunctions;
-- add server-side validation.
-
-### Phase 5 — Reuse validation
-
-- create a second small game module;
-- verify that OpenGame can be reused without treadmill dependencies;
-- extract any newly discovered generic components into the framework.
-
----
-
-## 14. Architectural Goal
-
-OpenGame should grow through real game requirements.
-
-The framework should not attempt to implement every possible system in advance. New reusable components should be extracted only when they solve a real need shared by more than one game or module.
-
-The intended result is:
+A good next sequence is:
 
 ```text
-OpenGame = reusable game framework
-TreadmillGame = first implementation using OpenGame
-Future games = new implementations using the same framework
+1. stabilize current Training/Treadmill implementation
+2. add a second world interaction such as a running track
+3. identify which behavior is truly reusable
+4. extract generic world abstractions only when justified
+5. add persistence after player progression rules are stable
 ```
 
-This separation is the foundation of the project.
+The architectural target remains:
+
+```text
+OpenGame = reusable framework
+TreadmillGame = first game using OpenGame
+Future games = separate implementations using the same framework
+```
