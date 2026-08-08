@@ -2,25 +2,45 @@
 
 ## Purpose
 
-Services coordinate systems that live for most or all of the game session.
+Services coordinate long-lived capabilities and authoritative game rules.
 
-A service should represent a clear capability, not merely a folder for unrelated functions.
+A service should represent one clear responsibility. Framework services belong to OpenGame; game-specific services remain inside the game module that owns them.
 
-## Framework services
+## Current framework service
 
-Framework-level services are reusable across games.
+```text
+OpenGame
+└── Services
+    └── PlayerService
+```
 
-Examples:
+### PlayerService
 
-- Player lifecycle.
-- Logging.
-- Configuration.
-- Save abstraction.
-- Networking abstraction.
+`PlayerService` is generic. It creates player values from configuration supplied by the loaded game.
 
-## Game services
+It does not know about treadmill-specific statistics such as Coins, Strength, Distance, XP, or Level.
 
-Game-specific services belong to the game module that owns the feature.
+The game applies its configuration through:
+
+```lua
+playerService:SetConfig(playerConfig)
+```
+
+The current TreadmillGame player configuration defines:
+
+```text
+Coins
+Strength
+Distance
+XP
+Level
+```
+
+This keeps the framework reusable for games with completely different player statistics.
+
+## Training services
+
+The current Training module contains:
 
 ```text
 TreadmillGame
@@ -32,37 +52,103 @@ TreadmillGame
             └── RunningTrackService
 ```
 
-## Responsibilities
+### TrainingService
 
-A service may:
+`TrainingService` owns authoritative training rewards and progression updates.
 
-- Coordinate multiple GameObjects.
-- Connect Roblox events.
-- Apply business rules.
-- Expose a stable API to other modules.
-- Manage runtime collections.
+Current public operations include:
 
-A service should not contain all behavior of every object it manages. Object-specific behavior belongs in GameObjects.
+```lua
+TrainingService:AddTraining(player, coins, strength, xp)
+TrainingService:AddRunningTraining(player, coins, distance, xp)
+TrainingService:AddXP(player, amount)
+```
+
+Responsibilities include:
+
+- adding Coins and Strength for treadmill training;
+- adding Coins and Distance for running-track training;
+- adding XP;
+- checking level-up thresholds;
+- carrying excess XP into subsequent levels;
+- updating Level on the server.
+
+The service does not hard-code the XP progression formula. It consumes the game configuration from `Training/Config/Progression`.
+
+### TreadmillService
+
+`TreadmillService` discovers treadmill models under `Workspace/Map`, validates each model and its configured type, creates one `Treadmill` GameObject per active model, and owns the runtime collection of those objects.
+
+It also handles models added or removed while the game is running and removes leaving players from managed GameObjects.
+
+### RunningTrackService
+
+`RunningTrackService` performs the equivalent role for running tracks.
+
+It:
+
+- discovers models containing a `Track` part;
+- reads the model `Type` attribute;
+- resolves the matching `RunningTracks` configuration;
+- creates a `RunningTrack` GameObject;
+- manages runtime addition and removal;
+- removes players when they leave the server.
+
+## Service and GameObject boundary
+
+Services coordinate multiple instances. Object-specific runtime behavior belongs in GameObjects.
+
+```text
+TreadmillService
+      ↓
+Treadmill instances
+
+RunningTrackService
+      ↓
+RunningTrack instances
+```
+
+For example, `TreadmillService` does not directly implement belt movement. The `Treadmill` GameObject owns that behavior.
+
+Likewise, `RunningTrackService` does not determine whether an individual player is physically inside a track; `RunningTrack` composes the reusable `OpenGame.World.PlayerZone` component.
 
 ## Lifecycle
 
-Recommended contract:
+OpenGame currently controls services through the lifecycle methods they implement:
 
 ```lua
-function Service:Init(context)
-end
-
-function Service:Start()
-end
-
-function Service:Stop()
-end
+Initialize(engine)
+Start()
+Shutdown()
 ```
 
-## Rules
+Not every service currently implements every lifecycle method.
 
-- One clear responsibility per service.
-- No hidden dependency lookup when explicit injection is possible.
-- Server services own authoritative rewards and progression.
-- Services must guard against duplicate startup.
-- Event connections and loops must be cleaned up when stopped.
+Services are started in deterministic registration order. This is important because framework services such as `PlayerService` must be available before dependent game services begin operating.
+
+Shutdown proceeds in reverse service order so dependent systems can release resources before their dependencies are closed.
+
+## Authority
+
+Training rewards and progression are server-authoritative.
+
+Client code must not directly grant:
+
+- Coins;
+- Strength;
+- Distance;
+- XP;
+- Level.
+
+Future networking must send player intent to the server, where services validate and apply changes.
+
+## Design rules
+
+1. One clear responsibility per service.
+2. Framework services remain game-agnostic.
+3. Game-specific services live inside their owning functional module.
+4. Services coordinate GameObjects instead of absorbing all object behavior.
+5. Progression and reward mutations remain server-authoritative.
+6. Balance values belong in configuration modules rather than service code.
+7. Registration order defines startup order.
+8. Runtime collections and event connections must be cleaned up when their owning service or GameObject is destroyed.
